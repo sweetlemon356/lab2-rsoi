@@ -1,0 +1,13 @@
+.git
+.agents
+.codex
+.aws
+.env
+.env.*
+.tools
+bin
+images
+v1
+v3
+v4
+**/*_test.go

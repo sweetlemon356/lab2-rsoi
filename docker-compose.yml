@@ -1,20 +1,109 @@
-version: "3"
 services:
+  gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile.gateway
+    environment:
+      GATEWAY_ADDR: ":8080"
+      RESERVATION_URL: "http://reservation:8070"
+      PAYMENT_URL: "http://payment:8060"
+      LOYALTY_URL: "http://loyalty:8050"
+    ports:
+      - "8080:8080"
+    depends_on:
+      reservation:
+        condition: service_healthy
+      payment:
+        condition: service_healthy
+      loyalty:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "/gateway", "-healthcheck"]
+      interval: 5s
+      timeout: 2s
+      retries: 5
+      start_period: 2s
+
+  reservation:
+    build:
+      context: .
+      dockerfile: Dockerfile.service
+      args:
+        SERVICE: reservation
+    environment:
+      HTTP_ADDR: ":8070"
+      DATABASE_URL: "postgres://reservation_service:test@postgres:5432/reservation?sslmode=disable"
+    ports:
+      - "8070:8070"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "/service", "-healthcheck"]
+      interval: 5s
+      timeout: 2s
+      retries: 10
+      start_period: 10s
+
+  payment:
+    build:
+      context: .
+      dockerfile: Dockerfile.service
+      args:
+        SERVICE: payment
+    environment:
+      HTTP_ADDR: ":8060"
+      DATABASE_URL: "postgres://payment_service:test@postgres:5432/payment?sslmode=disable"
+    ports:
+      - "8060:8060"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "/service", "-healthcheck"]
+      interval: 5s
+      timeout: 2s
+      retries: 10
+      start_period: 10s
+
+  loyalty:
+    build:
+      context: .
+      dockerfile: Dockerfile.service
+      args:
+        SERVICE: loyalty
+    environment:
+      HTTP_ADDR: ":8050"
+      DATABASE_URL: "postgres://loyalty_service:test@postgres:5432/loyalty?sslmode=disable"
+    ports:
+      - "8050:8050"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "/service", "-healthcheck"]
+      interval: 5s
+      timeout: 2s
+      retries: 10
+      start_period: 10s
+
   postgres:
     image: library/postgres:13
-    container_name: postgres
     restart: on-failure
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: "postgres"
       POSTGRES_DB: postgres
     volumes:
-      - db-data:/var/lib/postgresql/data
-      - ./postgres/:/docker-entrypoint-initdb.d/
+      - db-data-v2:/var/lib/postgresql/data
+      - ./postgres/:/docker-entrypoint-initdb.d/:ro
     ports:
       - "5432:5432"
-
-# TODO добавить сервисы
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U postgres -d postgres"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
 
 volumes:
-  db-data:
+  db-data-v2:

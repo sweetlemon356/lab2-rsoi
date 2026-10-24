@@ -1,8 +1,8 @@
-CREATE DATABASE payments;
-GRANT ALL PRIVILEGES ON DATABASE payments TO program;
+CREATE DATABASE reservation OWNER reservation_service;
+CREATE DATABASE payment OWNER payment_service;
+CREATE DATABASE loyalty OWNER loyalty_service;
 
-CREATE DATABASE reservations;
-GRANT ALL PRIVILEGES ON DATABASE reservations TO program;
-
-CREATE DATABASE loyalties;
-GRANT ALL PRIVILEGES ON DATABASE loyalties TO program;
+REVOKE CONNECT ON DATABASE reservation, payment, loyalty FROM PUBLIC;
+GRANT CONNECT ON DATABASE reservation TO reservation_service;
+GRANT CONNECT ON DATABASE payment TO payment_service;
+GRANT CONNECT ON DATABASE loyalty TO loyalty_service;

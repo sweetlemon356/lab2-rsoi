@@ -1,0 +1,21 @@
+FROM golang:1.27.1 AS build
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+RUN CGO_ENABLED=0 GOBIN=/out go install \
+    -tags='no_clickhouse no_libsql no_mssql no_mysql no_sqlite3 no_vertica no_ydb' \
+    github.com/pressly/goose/v3/cmd/goose@v3.26.0
+COPY cmd ./cmd
+COPY internal ./internal
+ARG SERVICE
+RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/service ./cmd/${SERVICE}
+
+FROM alpine:3.22
+RUN apk add --no-cache ca-certificates
+ARG SERVICE
+COPY --from=build /out/service /service
+COPY --from=build /out/goose /goose
+COPY migrations/${SERVICE} /migrations
+COPY scripts/service-entrypoint.sh /entrypoint.sh
+USER 65532:65532
+ENTRYPOINT ["/entrypoint.sh"]

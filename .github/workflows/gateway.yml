@@ -1,0 +1,47 @@
+name: Services
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Check Go code and build binaries
+        run: make check
+      - name: Build images
+        run: make images
+      - name: Start services
+        run: docker compose up -d --wait --wait-timeout 120
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install Newman
+        run: npm install --global newman@6.2.1
+      - name: Acceptance tests
+        run: make test-api NEWMAN=newman
+      - name: Prepare repository test databases
+        run: |
+          for service in reservation payment loyalty; do
+            docker compose exec -T postgres psql -U postgres -v ON_ERROR_STOP=1 -c "CREATE DATABASE ${service}_test OWNER ${service}_service"
+            docker compose run --rm --no-deps --entrypoint /goose "$service" -dir /migrations postgres "postgres://${service}_service:test@postgres:5432/${service}_test?sslmode=disable" up
+          done
+      - name: PostgreSQL repository tests
+        run: make test-integration
+        env:
+          RESERVATION_TEST_DATABASE_URL: postgres://reservation_service:test@localhost:5432/reservation_test?sslmode=disable
+          PAYMENT_TEST_DATABASE_URL: postgres://payment_service:test@localhost:5432/payment_test?sslmode=disable
+          LOYALTY_TEST_DATABASE_URL: postgres://loyalty_service:test@localhost:5432/loyalty_test?sslmode=disable
+      - name: System tests
+        run: make test-e2e
+      - name: Logs
+        if: failure()
+        run: docker compose logs
+      - name: Stop services
+        if: always()
+        run: docker compose down -v

@@ -515,6 +515,9 @@ _deps
 ### Scala template
 
 ### Go template
+!/go.mod
+/.tools/
+
 # Binaries for programs and plugins
 *.exe~
 
@@ -1197,6 +1200,8 @@ FodyWeavers.xsd
 [Ll]ib64
 [Ll]ocal
 [Ss]cripts
+!/scripts/
+!/scripts/**
 pyvenv.cfg
 pip-selfcheck.json
 
@@ -1234,3 +1239,6 @@ buildNumber.properties
 .mvn/timing.properties
 # https://github.com/takari/maven-wrapper#usage-without-binary-jar
 .mvn/wrapper/maven-wrapper.jar
+
+# Hand-written project commands, overriding generated-Makefile templates above.
+!/Makefile

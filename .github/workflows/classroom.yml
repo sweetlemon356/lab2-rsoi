@@ -17,11 +17,23 @@ jobs:
 
       - uses: docker/setup-buildx-action@v2
 
-      # TODO build and run unit tests
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install Newman for acceptance and Classroom autograding
+        run: npm install --global newman@6.2.1
+
+      - name: Check Go code
+        run: make check
 
       - name: Build images
         timeout-minutes: 10
-        run: docker compose build
+        run: make images
 
       - name: Run containers
         timeout-minutes: 5
@@ -32,13 +44,7 @@ jobs:
           WAIT_PORTS: 8080,8070,8060,8050
 
       - name: Run API Tests
-        uses: matt-ball/newman-action@master
-        with:
-          # TODO insert your variant
-          collection: <variant>/postman/collection.json
-          environment: <variant>/postman/environment.json
-          delayRequest: 100
-          reporters: '[ "cli" ]'
+        run: make test-api NEWMAN=newman
 
       - uses: education/autograding@v1
         id: autograder
