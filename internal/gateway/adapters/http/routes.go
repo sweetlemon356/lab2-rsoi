@@ -15,6 +15,7 @@ type endpoint func(http.ResponseWriter, *http.Request) error
 
 func NewRouter(hotels *HotelController, reservations *ReservationController, loyalty *LoyaltyController, profile *ProfileController, timeout time.Duration, logger *slog.Logger) http.Handler {
 	mux := http.NewServeMux()
+	registerSwagger(mux)
 	handle := func(pattern string, handler endpoint) {
 		mux.HandleFunc(pattern, func(w http.ResponseWriter, r *http.Request) {
 			if err := handler(w, r); err != nil {

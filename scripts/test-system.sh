@@ -66,7 +66,8 @@ export RESERVATION_TEST_DATABASE_URL="postgres://reservation_service:test@127.0.
 export PAYMENT_TEST_DATABASE_URL="postgres://payment_service:test@127.0.0.1:$PGPORT/payment_test?sslmode=disable"
 export LOYALTY_TEST_DATABASE_URL="postgres://loyalty_service:test@127.0.0.1:$PGPORT/loyalty_test?sslmode=disable"
 go vet ./...
-SYSTEM_TEST_URL= go test -race -count=1 ./...
+env -u SYSTEM_TEST_URL -u RESERVATION_TEST_DATABASE_URL -u PAYMENT_TEST_DATABASE_URL -u LOYALTY_TEST_DATABASE_URL \
+  go test -race -count=1 ./...
 
 for pair in reservation:8070 payment:8060 loyalty:8050; do
   service=${pair%:*}
@@ -89,8 +90,7 @@ for port in 8070 8060 8050 8080; do
   $ready || { echo "Service on $port did not become ready" >&2; exit 1; }
 done
 
-"$NEWMAN_BIN" run v2/postman/collection.json -e v2/postman/environment.json
-SYSTEM_TEST_URL=http://127.0.0.1:8080 go test -race -count=1 -v ./tests/system
+make test-integration NEWMAN="$NEWMAN_BIN" BASE_URL=http://127.0.0.1:8080
 
 # Liveness of each actual binary's container healthcheck path.
 for pair in reservation:8070 payment:8060 loyalty:8050; do

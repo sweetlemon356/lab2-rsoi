@@ -18,7 +18,7 @@ GOOSE_TAGS := no_clickhouse no_libsql no_mssql no_mysql no_sqlite3 no_vertica no
 
 .PHONY: help fmt fmt-check vet test test-race check build clean run tools \
         compose-check images up down db logs ps health migrate migrate-status \
-        test-integration test-api test-e2e test-system require-service require-db-service
+        test-integration test-postgres test-api test-e2e test-system require-service require-db-service
 
 help: ## Список основных команд
 	@awk 'BEGIN {FS = ":.*## "; print "Команды (make <имя>):"} /^[a-zA-Z0-9_-]+:.*## / {printf "  %-19s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -93,7 +93,9 @@ migrate-status: require-db-service ## Посмотреть версии мигр
 	@test -n "$$DATABASE_URL" || { echo 'Задайте DATABASE_URL собственной базы сервиса.' >&2; exit 1; }
 	"$(GOOSE)" -dir migrations/$(SERVICE) postgres "$$DATABASE_URL" status
 
-test-integration: ## SQL-тесты; нужны три *_TEST_DATABASE_URL и мигрированные базы *_test
+test-integration: test-postgres test-api test-e2e ## Все интеграционные проверки: PostgreSQL, Postman и E2E
+
+test-postgres:
 	@test -n "$$RESERVATION_TEST_DATABASE_URL" && test -n "$$PAYMENT_TEST_DATABASE_URL" && test -n "$$LOYALTY_TEST_DATABASE_URL" || \
 		{ echo 'Задайте RESERVATION_TEST_DATABASE_URL, PAYMENT_TEST_DATABASE_URL и LOYALTY_TEST_DATABASE_URL.' >&2; exit 1; }
 	$(GO) test -race -count=1 ./internal/reservation/adapters/postgres ./internal/payment/adapters/postgres ./internal/loyalty/adapters/postgres
