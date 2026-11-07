@@ -98,13 +98,13 @@ test-integration: test-postgres test-api test-e2e ## Все интеграцио
 test-postgres:
 	@test -n "$$RESERVATION_TEST_DATABASE_URL" && test -n "$$PAYMENT_TEST_DATABASE_URL" && test -n "$$LOYALTY_TEST_DATABASE_URL" || \
 		{ echo 'Задайте RESERVATION_TEST_DATABASE_URL, PAYMENT_TEST_DATABASE_URL и LOYALTY_TEST_DATABASE_URL.' >&2; exit 1; }
-	$(GO) test -race -count=1 ./internal/reservation/adapters/postgres ./internal/payment/adapters/postgres ./internal/loyalty/adapters/postgres
+	$(GO) test -count=1 ./internal/reservation/adapters/postgres ./internal/payment/adapters/postgres ./internal/loyalty/adapters/postgres
 
 test-api: ## Исходная приемочная коллекция Postman на работающей системе
 	"$(NEWMAN)" run v2/postman/collection.json -e v2/postman/environment.json --env-var "baseUrl=$(BASE_URL)"
 
 test-e2e: ## Дополнительные системные тесты на работающей тестовой системе
-	SYSTEM_TEST_URL="$(BASE_URL)" $(GO) test -race -count=1 -v ./tests/system
+	SYSTEM_TEST_URL="$(BASE_URL)" $(GO) test -count=1 -v ./tests/system
 
 test-system: ## Полный нативный прогон с временным PostgreSQL и четырьмя сервисами
 	GOOSE_BIN="$(GOOSE)" NEWMAN_BIN="$(NEWMAN)" ./scripts/test-system.sh

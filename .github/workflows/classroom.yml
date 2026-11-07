@@ -6,12 +6,12 @@ on:
   workflow_dispatch:
 
 env:
-  # Keep Compose image names identical on the build and integration runners.
+  # Keep Compose image names identical on the build and test runners.
   COMPOSE_PROJECT_NAME: lab2-rsoi-ci
 
 jobs:
-  test:
-    name: Go checks and unit tests
+  checks:
+    name: Formatting and static analysis
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -19,41 +19,24 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-      - name: Check formatting, vet and race tests
-        run: make fmt-check vet test-race
+      - run: make fmt-check vet
 
   build:
-    name: Build binaries and Docker images
-    needs: test
+    name: Build Docker images
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
       - uses: docker/setup-buildx-action@v4
-      - name: Build four Go binaries
-        run: CGO_ENABLED=0 make build
-      - name: Build four Docker images
-        run: make images
-      - name: Archive build outputs
+      - run: make images
+      - name: Archive Docker images
         run: |
-          tar -czf "$RUNNER_TEMP/service-binaries.tar.gz" -C bin gateway reservation payment loyalty
           docker image save --output "$RUNNER_TEMP/service-images.tar" \
             "${COMPOSE_PROJECT_NAME}-gateway" \
             "${COMPOSE_PROJECT_NAME}-reservation" \
             "${COMPOSE_PROJECT_NAME}-payment" \
             "${COMPOSE_PROJECT_NAME}-loyalty"
-      - name: Upload binaries
-        uses: actions/upload-artifact@v4
-        with:
-          name: service-binaries
-          path: ${{ runner.temp }}/service-binaries.tar.gz
-          if-no-files-found: error
-          retention-days: 7
-      - name: Upload images for integration tests
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: service-images
           path: ${{ runner.temp }}/service-images.tar
@@ -61,50 +44,82 @@ jobs:
           compression-level: 0
           retention-days: 1
 
+  unit:
+    name: Go unit tests
+    needs: [checks, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: make test-race
+
   integration:
-    name: Integration tests and Classroom
-    needs: build
+    name: PostgreSQL and E2E tests
+    needs: unit
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-      - name: Install Newman
-        run: npm install --global newman@6.2.1
-      - name: Download built Docker images
-        uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v4
         with:
           name: service-images
           path: ${{ runner.temp }}
-      - name: Load built Docker images
-        run: docker image load --input "$RUNNER_TEMP/service-images.tar"
-      - name: Start services without rebuilding
-        run: docker compose up -d --no-build --pull missing --wait --wait-timeout 120
-      - name: Check all service health endpoints
-        run: make health
+      - name: Load images and start services
+        run: |
+          docker image load --input "$RUNNER_TEMP/service-images.tar"
+          docker compose up -d --no-build --pull missing --wait --wait-timeout 120
       - name: Prepare repository test databases
         run: |
           for service in reservation payment loyalty; do
             docker compose exec -T postgres psql -U postgres -v ON_ERROR_STOP=1 -c "CREATE DATABASE ${service}_test OWNER ${service}_service"
             docker compose run --rm --no-deps --pull never --entrypoint /goose "$service" -dir /migrations postgres "postgres://${service}_service:test@postgres:5432/${service}_test?sslmode=disable" up
           done
-      - name: Integration tests (PostgreSQL, Postman and E2E)
-        run: make test-integration NEWMAN=newman
+      - name: PostgreSQL tests
+        run: make test-postgres
         env:
           RESERVATION_TEST_DATABASE_URL: postgres://reservation_service:test@localhost:5432/reservation_test?sslmode=disable
           PAYMENT_TEST_DATABASE_URL: postgres://payment_service:test@localhost:5432/payment_test?sslmode=disable
           LOYALTY_TEST_DATABASE_URL: postgres://loyalty_service:test@localhost:5432/loyalty_test?sslmode=disable
+      - name: E2E tests
+        run: make test-e2e
+      - name: Container logs on failure
+        if: failure()
+        run: docker compose logs --no-color
+      - name: Stop containers
+        if: always()
+        run: docker compose down -v
+
+  autograding:
+    name: Classroom autograding (Newman)
+    needs: unit
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install Newman
+        run: npm install --global newman@6.2.1
+      - uses: actions/download-artifact@v4
+        with:
+          name: service-images
+          path: ${{ runner.temp }}
+      - name: Load images and start services
+        run: |
+          docker image load --input "$RUNNER_TEMP/service-images.tar"
+          docker compose up -d --no-build --pull missing --wait --wait-timeout 120
       - name: Classroom autograding
         uses: education/autograding@v1
         id: autograder
-        continue-on-error: true
       - name: Container logs on failure
         if: failure()
         run: docker compose logs --no-color
