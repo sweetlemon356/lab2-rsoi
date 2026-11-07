@@ -13,7 +13,13 @@ import (
 
 type endpoint func(http.ResponseWriter, *http.Request) error
 
-func NewRouter(hotels *HotelController, reservations *ReservationController, loyalty *LoyaltyController, profile *ProfileController, timeout time.Duration, logger *slog.Logger) http.Handler {
+// Handler translates public HTTP requests into application service calls.
+type Handler struct {
+	service *application.Service
+}
+
+func NewHandler(service *application.Service, timeout time.Duration, logger *slog.Logger) http.Handler {
+	h := &Handler{service: service}
 	mux := http.NewServeMux()
 	registerSwagger(mux)
 	handle := func(pattern string, handler endpoint) {
@@ -26,13 +32,13 @@ func NewRouter(hotels *HotelController, reservations *ReservationController, loy
 			}
 		})
 	}
-	handle("GET /api/v1/hotels", hotels.List)
-	handle("GET /api/v1/me", profile.GetMe)
-	handle("GET /api/v1/loyalty", loyalty.Get)
-	handle("GET /api/v1/reservations", reservations.List)
-	handle("GET /api/v1/reservations/{reservationUid}", reservations.Get)
-	handle("POST /api/v1/reservations", reservations.Create)
-	handle("DELETE /api/v1/reservations/{reservationUid}", reservations.Cancel)
+	handle("GET /api/v1/hotels", h.listHotels)
+	handle("GET /api/v1/me", h.getMe)
+	handle("GET /api/v1/loyalty", h.getLoyalty)
+	handle("GET /api/v1/reservations", h.listReservations)
+	handle("GET /api/v1/reservations/{reservationUid}", h.getReservation)
+	handle("POST /api/v1/reservations", h.createReservation)
+	handle("DELETE /api/v1/reservations/{reservationUid}", h.cancelReservation)
 	handle("GET /manage/health", func(w http.ResponseWriter, _ *http.Request) error {
 		return writeJSON(w, 200, struct {
 			Status string `json:"status"`

@@ -1,9 +1,7 @@
 package httpadapter
 
 import (
-	"context"
 	"errors"
-	"log/slog"
 	"math"
 	"net/http"
 	"time"
@@ -13,37 +11,7 @@ import (
 	"github.com/sweetlemon356/lab2-rsoi/internal/reservation/domain"
 )
 
-type Catalog interface {
-	ListHotels(context.Context, application.PageQuery) (application.HotelPage, error)
-	Quote(context.Context, string, time.Time, time.Time, int) (application.Quote, error)
-}
-
-type Bookings interface {
-	ListReservations(context.Context, string) ([]application.Details, error)
-	GetReservation(context.Context, string, string) (application.Details, error)
-	Create(context.Context, application.CreateCommand) error
-	Cancel(context.Context, string, string) error
-}
-
-type Controller struct {
-	catalog  Catalog
-	bookings Bookings
-}
-
-func NewHandler(catalog Catalog, bookings Bookings, health func(context.Context) error, timeout time.Duration, logger *slog.Logger) http.Handler {
-	c := &Controller{catalog: catalog, bookings: bookings}
-	router := httpapi.NewRouter(timeout, logger, classify)
-	router.Handle("GET /internal/v1/hotels", c.hotels)
-	router.Handle("POST /internal/v1/reservations/quote", c.quote)
-	router.Handle("GET /internal/v1/reservations", c.list)
-	router.Handle("GET /internal/v1/reservations/{uid}", c.get)
-	router.Handle("PUT /internal/v1/reservations/{uid}", c.create)
-	router.Handle("PUT /internal/v1/reservations/{uid}/cancellation", c.cancel)
-	router.Health(health)
-	return router
-}
-
-func (c *Controller) hotels(w http.ResponseWriter, r *http.Request) error {
+func (h *Handler) hotels(w http.ResponseWriter, r *http.Request) error {
 	page, err := httpapi.Integer(r, "page", 1, 0, math.MaxInt)
 	if err != nil {
 		return err
@@ -52,7 +20,7 @@ func (c *Controller) hotels(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	result, err := c.catalog.ListHotels(r.Context(), application.PageQuery{Page: page, Size: size})
+	result, err := h.service.ListHotels(r.Context(), application.PageQuery{Page: page, Size: size})
 	if err != nil {
 		return err
 	}
@@ -68,7 +36,7 @@ func (c *Controller) hotels(w http.ResponseWriter, r *http.Request) error {
 	}{result.Page, result.PageSize, result.TotalElements, items})
 }
 
-func (c *Controller) quote(w http.ResponseWriter, r *http.Request) error {
+func (h *Handler) quote(w http.ResponseWriter, r *http.Request) error {
 	var body struct {
 		HotelUID  string `json:"hotelUid"`
 		StartDate string `json:"startDate"`
@@ -93,7 +61,7 @@ func (c *Controller) quote(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	result, err := c.catalog.Quote(r.Context(), hotel, start, end, *body.Discount)
+	result, err := h.service.Quote(r.Context(), hotel, start, end, *body.Discount)
 	if err != nil {
 		return err
 	}
@@ -105,12 +73,12 @@ func (c *Controller) quote(w http.ResponseWriter, r *http.Request) error {
 	}{result.HotelUID, result.Stay.StartDate.Format(time.DateOnly), result.Stay.EndDate.Format(time.DateOnly), result.Price})
 }
 
-func (c *Controller) list(w http.ResponseWriter, r *http.Request) error {
+func (h *Handler) list(w http.ResponseWriter, r *http.Request) error {
 	user, err := httpapi.User(r.Header.Get("X-User-Name"))
 	if err != nil {
 		return err
 	}
-	rows, err := c.bookings.ListReservations(r.Context(), user)
+	rows, err := h.service.ListReservations(r.Context(), user)
 	if err != nil {
 		return err
 	}
@@ -121,7 +89,7 @@ func (c *Controller) list(w http.ResponseWriter, r *http.Request) error {
 	return httpapi.JSON(w, 200, results)
 }
 
-func (c *Controller) get(w http.ResponseWriter, r *http.Request) error {
+func (h *Handler) get(w http.ResponseWriter, r *http.Request) error {
 	user, err := httpapi.User(r.Header.Get("X-User-Name"))
 	if err != nil {
 		return err
@@ -130,14 +98,14 @@ func (c *Controller) get(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	result, err := c.bookings.GetReservation(r.Context(), user, id)
+	result, err := h.service.GetReservation(r.Context(), user, id)
 	if err != nil {
 		return err
 	}
 	return httpapi.JSON(w, 200, reservationJSON(result))
 }
 
-func (c *Controller) create(w http.ResponseWriter, r *http.Request) error {
+func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
 	id, err := httpapi.UUID(r.PathValue("uid"))
 	if err != nil {
 		return err
@@ -172,14 +140,14 @@ func (c *Controller) create(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	if err := c.bookings.Create(r.Context(), application.CreateCommand{UID: id, Username: user, PaymentUID: payment, HotelUID: hotel, StartDate: start, EndDate: end}); err != nil {
+	if err := h.service.Create(r.Context(), application.CreateCommand{UID: id, Username: user, PaymentUID: payment, HotelUID: hotel, StartDate: start, EndDate: end}); err != nil {
 		return err
 	}
 	w.WriteHeader(201)
 	return nil
 }
 
-func (c *Controller) cancel(w http.ResponseWriter, r *http.Request) error {
+func (h *Handler) cancel(w http.ResponseWriter, r *http.Request) error {
 	id, err := httpapi.UUID(r.PathValue("uid"))
 	if err != nil {
 		return err
@@ -194,7 +162,7 @@ func (c *Controller) cancel(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	if err := c.bookings.Cancel(r.Context(), user, id); err != nil {
+	if err := h.service.Cancel(r.Context(), user, id); err != nil {
 		return err
 	}
 	w.WriteHeader(204)

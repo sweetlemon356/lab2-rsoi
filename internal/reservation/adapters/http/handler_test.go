@@ -21,7 +21,7 @@ const (
 	paymentID = "5c9ced89-f43a-4ac4-a516-e6660e5bddcb"
 )
 
-type useCase struct {
+type repository struct {
 	calls     int
 	user, uid string
 	filled    bool
@@ -29,7 +29,7 @@ type useCase struct {
 	err       error
 }
 
-func (s *useCase) ListHotels(_ context.Context, q a.PageQuery) (a.HotelPage, error) {
+func (s *repository) List(_ context.Context, q a.PageQuery) (a.HotelPage, error) {
 	s.calls++
 	if s.filled {
 		return a.HotelPage{Page: q.Page, PageSize: q.Size, TotalElements: 1, Items: []d.Hotel{{UID: hotelID, Name: "Hotel", Country: "Россия", City: "Москва", Address: "Address", Stars: 5, Price: 10000}}}, nil
@@ -37,22 +37,21 @@ func (s *useCase) ListHotels(_ context.Context, q a.PageQuery) (a.HotelPage, err
 	return a.HotelPage{Page: q.Page, PageSize: q.Size, TotalElements: 0}, s.err
 }
 
-func (s *useCase) Quote(_ context.Context, uid string, start, end time.Time, discount int) (a.Quote, error) {
+func (s *repository) GetHotel(_ context.Context, uid string) (d.Hotel, error) {
 	s.calls++
-	if uid != hotelID || discount != 10 {
-		return a.Quote{}, d.ErrInvalid
+	if uid != hotelID {
+		return d.Hotel{}, d.ErrNotFound
 	}
-	stay, err := d.NewStay(start, end)
-	return a.Quote{HotelUID: uid, Stay: stay, Price: 27000}, err
+	return d.Hotel{UID: uid, Price: 10000}, s.err
 }
 
-func (s *useCase) ListReservations(_ context.Context, user string) ([]a.Details, error) {
+func (s *repository) ListByUser(_ context.Context, user string) ([]a.Details, error) {
 	s.calls++
 	s.user = user
 	return nil, s.err
 }
 
-func (s *useCase) GetReservation(_ context.Context, user, uid string) (a.Details, error) {
+func (s *repository) GetByUser(_ context.Context, user, uid string) (a.Details, error) {
 	s.calls++
 	s.user = user
 	s.uid = uid
@@ -63,55 +62,55 @@ func (s *useCase) GetReservation(_ context.Context, user, uid string) (a.Details
 	return a.Details{Reservation: d.Reservation{UID: uid, Username: user, PaymentUID: paymentID, HotelUID: hotelID, Stay: stay, Status: "PAID"}, Hotel: d.Hotel{UID: hotelID, Name: "Hotel", Country: "Россия", City: "Москва", Address: "Address", Stars: 5}}, nil
 }
 
-func (s *useCase) Create(_ context.Context, c a.CreateCommand) error {
+func (s *repository) Create(_ context.Context, reservation d.Reservation) error {
 	s.calls++
-	s.command = c
+	s.command = a.CreateCommand{UID: reservation.UID, Username: reservation.Username, PaymentUID: reservation.PaymentUID, HotelUID: reservation.HotelUID, StartDate: reservation.Stay.StartDate, EndDate: reservation.Stay.EndDate}
 	return s.err
 }
 
-func (s *useCase) Cancel(_ context.Context, user, uid string) error {
+func (s *repository) Cancel(_ context.Context, user, uid string) error {
 	s.calls++
 	s.user = user
 	s.uid = uid
 	return s.err
 }
 
-func call(s *useCase, method, path, body, user string) *httptest.ResponseRecorder {
+func call(s *repository, method, path, body, user string) *httptest.ResponseRecorder {
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest(method, path, strings.NewReader(body))
 	r.Header.Set("X-User-Name", user)
-	h.NewHandler(s, s, func(context.Context) error { return nil }, time.Second, slog.New(slog.NewTextHandler(io.Discard, nil))).ServeHTTP(w, r)
+	h.NewHandler(a.NewService(s, s), func(context.Context) error { return nil }, time.Second, slog.New(slog.NewTextHandler(io.Discard, nil))).ServeHTTP(w, r)
 	return w
 }
 
 func TestReservationIdentityAndCompleteQuoteHotelContracts(t *testing.T) {
 	for _, path := range []string{"/internal/v1/reservations", "/internal/v1/reservations/" + id} {
 		for _, user := range []string{"", "  "} {
-			s := &useCase{}
+			s := &repository{}
 			w := call(s, "GET", path, "", user)
 			if w.Code != 400 || s.calls != 0 {
 				t.Fatalf("missing owner accepted: %d", w.Code)
 			}
 		}
 	}
-	s := &useCase{}
+	s := &repository{}
 	w := call(s, "GET", "/internal/v1/reservations", "", "Test Max")
 	if w.Code != 200 || s.user != "Test Max" {
 		t.Fatal("list owner lost")
 	}
-	s = &useCase{}
+	s = &repository{}
 	w = call(s, "PUT", "/internal/v1/reservations/"+id+"/cancellation", `{"username":"Test Max"}`, "")
 	if w.Code != 204 || s.user != "Test Max" || s.uid != id {
 		t.Fatalf("cancel identity=%+v", s)
 	}
 	for _, path := range []string{"/internal/v1/reservations/bad", "/internal/v1/reservations/bad/cancellation"} {
-		s := &useCase{}
+		s := &repository{}
 		w := call(s, "PUT", path, `{}`, "")
 		if w.Code != 400 || s.calls != 0 {
 			t.Fatalf("bad UUID accepted: %d", w.Code)
 		}
 	}
-	w = call(&useCase{}, "POST", "/internal/v1/reservations/quote", `{"hotelUid":"`+hotelID+`","startDate":"2021-10-08","endDate":"2021-10-11","discount":10}`, "")
+	w = call(&repository{}, "POST", "/internal/v1/reservations/quote", `{"hotelUid":"`+hotelID+`","startDate":"2021-10-08","endDate":"2021-10-11","discount":10}`, "")
 	var quote map[string]any
 	if err := json.Unmarshal(w.Body.Bytes(), &quote); err != nil {
 		t.Fatal(err)
@@ -119,7 +118,7 @@ func TestReservationIdentityAndCompleteQuoteHotelContracts(t *testing.T) {
 	if len(quote) != 4 || quote["hotelUid"] != hotelID || quote["startDate"] != "2021-10-08" || quote["endDate"] != "2021-10-11" || quote["price"] != float64(27000) {
 		t.Fatalf("quote=%v", quote)
 	}
-	w = call(&useCase{filled: true}, "GET", "/internal/v1/hotels?page=1&size=10", "", "")
+	w = call(&repository{filled: true}, "GET", "/internal/v1/hotels?page=1&size=10", "", "")
 	var page struct {
 		Page  int              `json:"page"`
 		Size  int              `json:"pageSize"`
@@ -139,7 +138,7 @@ func TestReservationIdentityAndCompleteQuoteHotelContracts(t *testing.T) {
 }
 
 func TestReservationHTTPMapsCalendarDatesAndPrivateReferences(t *testing.T) {
-	s := &useCase{}
+	s := &repository{}
 	w := call(s, "GET", "/internal/v1/reservations/"+id, "", "Test Max")
 	var got map[string]any
 	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
@@ -150,15 +149,15 @@ func TestReservationHTTPMapsCalendarDatesAndPrivateReferences(t *testing.T) {
 		t.Fatalf("body=%s", w.Body.String())
 	}
 	quote := `{"hotelUid":"` + hotelID + `","startDate":"2021-10-08","endDate":"2021-10-11","discount":10}`
-	w = call(&useCase{}, "POST", "/internal/v1/reservations/quote", quote, "")
+	w = call(&repository{}, "POST", "/internal/v1/reservations/quote", quote, "")
 	if w.Code != 200 || !strings.Contains(w.Body.String(), `"price":27000`) {
 		t.Fatalf("quote=%s", w.Body.String())
 	}
-	w = call(&useCase{}, "GET", "/internal/v1/reservations", "", "Test Max")
+	w = call(&repository{}, "GET", "/internal/v1/reservations", "", "Test Max")
 	if w.Code != 200 || strings.TrimSpace(w.Body.String()) != "[]" {
 		t.Fatalf("list=%s", w.Body.String())
 	}
-	w = call(&useCase{}, "GET", "/internal/v1/hotels?page=0&size=1", "", "")
+	w = call(&repository{}, "GET", "/internal/v1/hotels?page=0&size=1", "", "")
 	if w.Code != 200 || !strings.Contains(w.Body.String(), `"items":[]`) {
 		t.Fatalf("hotels=%s", w.Body.String())
 	}
@@ -166,23 +165,23 @@ func TestReservationHTTPMapsCalendarDatesAndPrivateReferences(t *testing.T) {
 
 func TestReservationWritesValidateAndPassIdentity(t *testing.T) {
 	body := `{"username":"Test Max","paymentUid":"` + paymentID + `","hotelUid":"` + hotelID + `","startDate":"2021-10-08","endDate":"2021-10-11"}`
-	s := &useCase{}
+	s := &repository{}
 	w := call(s, "PUT", "/internal/v1/reservations/"+id, body, "")
 	if w.Code != 201 || s.command.UID != id || s.command.PaymentUID != paymentID || s.command.Username != "Test Max" || s.command.StartDate.Format(time.DateOnly) != "2021-10-08" {
 		t.Fatalf("status=%d,command=%+v", w.Code, s.command)
 	}
 	for _, bad := range []string{`null`, `{}`, strings.Replace(body, paymentID, "bad", 1), strings.Replace(body, "2021-10-08", "2021-02-30", 1), body + ` {}`} {
-		s := &useCase{}
+		s := &repository{}
 		w := call(s, "PUT", "/internal/v1/reservations/"+id, bad, "")
 		if w.Code != 400 || s.calls != 0 {
 			t.Fatalf("status=%d,body=%s", w.Code, bad)
 		}
 	}
-	w = call(&useCase{err: d.ErrNotFound}, "GET", "/internal/v1/reservations/"+id, "", "other")
+	w = call(&repository{err: d.ErrNotFound}, "GET", "/internal/v1/reservations/"+id, "", "other")
 	if w.Code != 404 {
 		t.Fatalf("foreign status=%d", w.Code)
 	}
-	w = call(&useCase{}, "PUT", "/internal/v1/reservations/"+id+"/cancellation", `{"username":"Test Max"}`, "")
+	w = call(&repository{}, "PUT", "/internal/v1/reservations/"+id+"/cancellation", `{"username":"Test Max"}`, "")
 	if w.Code != 204 || w.Body.Len() != 0 {
 		t.Fatalf("cancel=%d", w.Code)
 	}

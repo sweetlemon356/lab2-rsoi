@@ -14,7 +14,7 @@ import (
 	"github.com/sweetlemon356/lab2-rsoi/internal/gateway/application"
 )
 
-func (c *HotelController) List(w http.ResponseWriter, r *http.Request) error {
+func (h *Handler) listHotels(w http.ResponseWriter, r *http.Request) error {
 	page, err := queryInteger(r, "page", 1, 0, int(^uint(0)>>1))
 	if err != nil {
 		return err
@@ -26,7 +26,7 @@ func (c *HotelController) List(w http.ResponseWriter, r *http.Request) error {
 	if page > math.MaxInt/size {
 		return invalidField("page", "pagination offset is too large")
 	}
-	result, err := c.hotels.ListHotels(r.Context(), application.PageQuery{Page: page, Size: size})
+	result, err := h.service.ListHotels(r.Context(), application.PageQuery{Page: page, Size: size})
 	if err != nil {
 		return err
 	}
@@ -41,67 +41,67 @@ func (c *HotelController) List(w http.ResponseWriter, r *http.Request) error {
 	return writeJSON(w, 200, hotelPageResponse{Page: result.Page, PageSize: result.PageSize, TotalElements: result.TotalElements, Items: items})
 }
 
-func (c *ProfileController) GetMe(w http.ResponseWriter, r *http.Request) error {
+func (h *Handler) getMe(w http.ResponseWriter, r *http.Request) error {
 	username, err := requestUser(r)
 	if err != nil {
 		return err
 	}
-	result, err := c.userInfo.GetUserInfo(r.Context(), username)
+	result, err := h.service.GetUserInfo(r.Context(), username)
 	if err != nil {
 		return err
 	}
 	return writeJSON(w, 200, userInfoResponse{Reservations: reservationResponses(result.Reservations), Loyalty: loyaltyJSON(result.Loyalty)})
 }
 
-func (c *LoyaltyController) Get(w http.ResponseWriter, r *http.Request) error {
+func (h *Handler) getLoyalty(w http.ResponseWriter, r *http.Request) error {
 	username, err := requestUser(r)
 	if err != nil {
 		return err
 	}
-	result, err := c.loyalty.GetLoyalty(r.Context(), username)
+	result, err := h.service.GetLoyalty(r.Context(), username)
 	if err != nil {
 		return err
 	}
 	return writeJSON(w, 200, loyaltyJSON(result))
 }
 
-func (c *ReservationController) List(w http.ResponseWriter, r *http.Request) error {
+func (h *Handler) listReservations(w http.ResponseWriter, r *http.Request) error {
 	username, err := requestUser(r)
 	if err != nil {
 		return err
 	}
-	result, err := c.reservations.ListReservations(r.Context(), username)
+	result, err := h.service.ListReservations(r.Context(), username)
 	if err != nil {
 		return err
 	}
 	return writeJSON(w, 200, reservationResponses(result))
 }
 
-func (c *ReservationController) Get(w http.ResponseWriter, r *http.Request) error {
+func (h *Handler) getReservation(w http.ResponseWriter, r *http.Request) error {
 	username, reservationUID, err := reservationIdentity(r)
 	if err != nil {
 		return err
 	}
-	result, err := c.reservations.GetReservation(r.Context(), username, reservationUID)
+	result, err := h.service.GetReservation(r.Context(), username, reservationUID)
 	if err != nil {
 		return err
 	}
 	return writeJSON(w, 200, reservationJSON(result))
 }
 
-func (c *ReservationController) Cancel(w http.ResponseWriter, r *http.Request) error {
+func (h *Handler) cancelReservation(w http.ResponseWriter, r *http.Request) error {
 	username, reservationUID, err := reservationIdentity(r)
 	if err != nil {
 		return err
 	}
-	if err := c.reservations.CancelReservation(r.Context(), username, reservationUID); err != nil {
+	if err := h.service.CancelReservation(r.Context(), username, reservationUID); err != nil {
 		return err
 	}
 	w.WriteHeader(http.StatusNoContent)
 	return nil
 }
 
-func (c *ReservationController) Create(w http.ResponseWriter, r *http.Request) error {
+func (h *Handler) createReservation(w http.ResponseWriter, r *http.Request) error {
 	username, err := requestUser(r)
 	if err != nil {
 		return err
@@ -129,7 +129,7 @@ func (c *ReservationController) Create(w http.ResponseWriter, r *http.Request) e
 	command := application.CreateReservationCommand{
 		Username: username, HotelUID: hotelUID, StartDate: start, EndDate: end,
 	}
-	result, err := c.reservations.CreateReservation(r.Context(), command)
+	result, err := h.service.CreateReservation(r.Context(), command)
 	if err != nil {
 		return err
 	}

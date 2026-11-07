@@ -23,76 +23,109 @@ const (
 	validBody     = `{"hotelUid":"049161bb-badd-4fa8-9d90-87c9a82b0668","startDate":"2021-10-08","endDate":"2021-10-11"}`
 )
 
+// HTTP tests run the real application service with fake backend clients.
 type httpFixture struct {
 	hotels  func(context.Context, app.PageQuery) (app.HotelPage, error)
-	list    func(context.Context, string) ([]app.ReservationView, error)
-	get     func(context.Context, string, string) (app.ReservationView, error)
-	create  func(context.Context, app.CreateReservationCommand) (app.CreateReservationResult, error)
+	list    func(context.Context, string) ([]app.ReservationData, error)
+	get     func(context.Context, string, string) (app.ReservationData, error)
+	create  func(context.Context, app.SaveReservationCommand) error
 	cancel  func(context.Context, string, string) error
 	loyalty func(context.Context, string) (app.LoyaltyInfo, error)
-	profile func(context.Context, string) (app.UserInfoView, error)
 	calls   int
 }
 
-func (f *httpFixture) ListHotels(ctx context.Context, query app.PageQuery) (app.HotelPage, error) {
-	return f.hotels(ctx, query)
+type reservationClient struct{ f *httpFixture }
+
+func (c reservationClient) ListHotels(ctx context.Context, q app.PageQuery) (app.HotelPage, error) {
+	return c.f.hotels(ctx, q)
+}
+func (c reservationClient) ListByUser(ctx context.Context, user string) ([]app.ReservationData, error) {
+	return c.f.list(ctx, user)
+}
+func (c reservationClient) GetByUser(ctx context.Context, user, id string) (app.ReservationData, error) {
+	return c.f.get(ctx, user, id)
+}
+func (c reservationClient) Quote(_ context.Context, q app.QuoteRequest) (app.ReservationQuote, error) {
+	c.f.calls++
+	return app.ReservationQuote{HotelUID: q.HotelUID, StartDate: q.StartDate, EndDate: q.EndDate, Price: 27000}, nil
+}
+func (c reservationClient) Create(ctx context.Context, command app.SaveReservationCommand) error {
+	return c.f.create(ctx, command)
+}
+func (c reservationClient) Cancel(ctx context.Context, user, id string) error {
+	return c.f.cancel(ctx, user, id)
 }
 
-func (f *httpFixture) ListReservations(ctx context.Context, username string) ([]app.ReservationView, error) {
-	return f.list(ctx, username)
+type paymentClient struct{ f *httpFixture }
+
+func (c paymentClient) Get(context.Context, string) (app.PaymentInfo, error) {
+	c.f.calls++
+	return app.PaymentInfo{Status: "PAID", Price: 27000}, nil
+}
+func (c paymentClient) Create(_ context.Context, command app.CreatePaymentCommand) (app.PaymentInfo, error) {
+	c.f.calls++
+	return app.PaymentInfo{Status: "PAID", Price: command.Price}, nil
+}
+func (c paymentClient) Cancel(context.Context, string) error {
+	c.f.calls++
+	return nil
 }
 
-func (f *httpFixture) GetReservation(ctx context.Context, username, uid string) (app.ReservationView, error) {
-	return f.get(ctx, username, uid)
-}
+type loyaltyClient struct{ f *httpFixture }
 
-func (f *httpFixture) CreateReservation(ctx context.Context, command app.CreateReservationCommand) (app.CreateReservationResult, error) {
-	return f.create(ctx, command)
+func (c loyaltyClient) Get(ctx context.Context, user string) (app.LoyaltyInfo, error) {
+	return c.f.loyalty(ctx, user)
 }
-
-func (f *httpFixture) CancelReservation(ctx context.Context, username, uid string) error {
-	return f.cancel(ctx, username, uid)
+func (c loyaltyClient) AddReservation(context.Context, string, string) error {
+	c.f.calls++
+	return nil
 }
-
-func (f *httpFixture) GetLoyalty(ctx context.Context, username string) (app.LoyaltyInfo, error) {
-	return f.loyalty(ctx, username)
-}
-
-func (f *httpFixture) GetUserInfo(ctx context.Context, username string) (app.UserInfoView, error) {
-	return f.profile(ctx, username)
+func (c loyaltyClient) RemoveReservation(context.Context, string, string) error {
+	c.f.calls++
+	return nil
 }
 
 func newFixture() *httpFixture {
 	f := &httpFixture{}
 	date := func(day int) time.Time { return time.Date(2021, 10, day, 0, 0, 0, 0, time.UTC) }
-	view := app.ReservationView{ReservationUID: reservationID, Hotel: app.HotelInfo{HotelUID: hotelID, Name: "Ararat Park Hyatt Moscow", FullAddress: "Россия, Москва, Неглинная ул., 4", Stars: 5}, StartDate: date(8), EndDate: date(11), Status: "PAID", Payment: app.PaymentInfo{Status: "PAID", Price: 27000}}
+	row := app.ReservationData{ReservationUID: reservationID, PaymentUID: "5c9ced89-f43a-4ac4-a516-e6660e5bddcb", Hotel: app.HotelInfo{HotelUID: hotelID, Name: "Ararat Park Hyatt Moscow", FullAddress: "Россия, Москва, Неглинная ул., 4", Stars: 5}, StartDate: date(8), EndDate: date(11), Status: "PAID"}
 	f.hotels = func(_ context.Context, q app.PageQuery) (app.HotelPage, error) {
 		f.calls++
 		return app.HotelPage{Page: q.Page, PageSize: q.Size, TotalElements: 1, Items: []app.Hotel{{HotelUID: hotelID, Name: "Ararat Park Hyatt Moscow", Country: "Россия", City: "Москва", Address: "Неглинная ул., 4", Stars: 5, Price: 10000}}}, nil
 	}
-	f.list = func(context.Context, string) ([]app.ReservationView, error) {
+	f.list = func(_ context.Context, user string) ([]app.ReservationData, error) {
 		f.calls++
-		return []app.ReservationView{view}, nil
+		result := row
+		result.Username = user
+		return []app.ReservationData{result}, nil
 	}
-	f.get = func(context.Context, string, string) (app.ReservationView, error) { f.calls++; return view, nil }
-	f.create = func(context.Context, app.CreateReservationCommand) (app.CreateReservationResult, error) {
+	f.get = func(_ context.Context, user, id string) (app.ReservationData, error) {
 		f.calls++
-		return app.CreateReservationResult{ReservationUID: reservationID, HotelUID: hotelID, StartDate: date(8), EndDate: date(11), Discount: 10, Status: "PAID", Payment: view.Payment}, nil
+		result := row
+		result.Username = user
+		result.ReservationUID = id
+		return result, nil
 	}
+	f.create = func(context.Context, app.SaveReservationCommand) error { f.calls++; return nil }
 	f.cancel = func(context.Context, string, string) error { f.calls++; return nil }
 	f.loyalty = func(context.Context, string) (app.LoyaltyInfo, error) {
 		f.calls++
 		return app.LoyaltyInfo{Status: "GOLD", Discount: 10, ReservationCount: 25}, nil
 	}
-	f.profile = func(context.Context, string) (app.UserInfoView, error) {
-		f.calls++
-		return app.UserInfoView{Reservations: []app.ReservationView{view}, Loyalty: app.LoyaltyInfo{Status: "GOLD", Discount: 10, ReservationCount: 25}}, nil
-	}
 	return f
 }
 
 func (f *httpFixture) router(timeout time.Duration) http.Handler {
-	return web.NewRouter(web.NewHotelController(f), web.NewReservationController(f), web.NewLoyaltyController(f), web.NewProfileController(f), timeout, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	nextID := 0
+	newID := func() (string, error) {
+		nextID++
+		if nextID == 1 {
+			return reservationID, nil
+		}
+		return "5c9ced89-f43a-4ac4-a516-e6660e5bddcb", nil
+	}
+	service := app.NewService(reservationClient{f}, paymentClient{f}, loyaltyClient{f}, newID, time.Second)
+	return web.NewHandler(service, timeout, slog.New(slog.NewTextHandler(io.Discard, nil)))
 }
 
 func request(handler http.Handler, method, path, body, user string) *httptest.ResponseRecorder {
@@ -143,19 +176,20 @@ func TestPublicRoutesAndResponseShapes(t *testing.T) {
 		name, method, path, body string
 		status                   int
 		fields                   []string
+		calls                    int
 	}{
-		{"hotels", "GET", "/api/v1/hotels?page=1&size=10", "", 200, []string{"page", "pageSize", "totalElements", "items"}},
-		{"profile", "GET", "/api/v1/me", "", 200, []string{"reservations", "loyalty"}},
-		{"reservations", "GET", "/api/v1/reservations", "", 200, nil},
-		{"reservation", "GET", "/api/v1/reservations/" + reservationID, "", 200, []string{"reservationUid", "hotel", "startDate", "endDate", "status", "payment"}},
-		{"create", "POST", "/api/v1/reservations", validBody, 200, []string{"reservationUid", "hotelUid", "startDate", "endDate", "discount", "status", "payment"}},
-		{"cancel", "DELETE", "/api/v1/reservations/" + reservationID, "", 204, nil},
-		{"loyalty", "GET", "/api/v1/loyalty", "", 200, []string{"status", "discount", "reservationCount"}},
+		{"hotels", "GET", "/api/v1/hotels?page=1&size=10", "", 200, []string{"page", "pageSize", "totalElements", "items"}, 1},
+		{"profile", "GET", "/api/v1/me", "", 200, []string{"reservations", "loyalty"}, 3},
+		{"reservations", "GET", "/api/v1/reservations", "", 200, nil, 2},
+		{"reservation", "GET", "/api/v1/reservations/" + reservationID, "", 200, []string{"reservationUid", "hotel", "startDate", "endDate", "status", "payment"}, 2},
+		{"create", "POST", "/api/v1/reservations", validBody, 200, []string{"reservationUid", "hotelUid", "startDate", "endDate", "discount", "status", "payment"}, 5},
+		{"cancel", "DELETE", "/api/v1/reservations/" + reservationID, "", 204, nil, 4},
+		{"loyalty", "GET", "/api/v1/loyalty", "", 200, []string{"status", "discount", "reservationCount"}, 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newFixture()
 			w := request(f.router(time.Second), tc.method, tc.path, tc.body, "Test Max")
-			if w.Code != tc.status || f.calls != 1 {
+			if w.Code != tc.status || f.calls != tc.calls {
 				t.Fatalf("status=%d, calls=%d, body=%s", w.Code, f.calls, w.Body.String())
 			}
 			if tc.status == 204 {
@@ -192,17 +226,17 @@ func TestPublicRoutesAndResponseShapes(t *testing.T) {
 	}
 }
 
-func TestCreateControllerPassesParsedDatesAndUsername(t *testing.T) {
+func TestCreateHandlerPassesParsedDatesAndUsername(t *testing.T) {
 	f := newFixture()
-	f.create = func(_ context.Context, c app.CreateReservationCommand) (app.CreateReservationResult, error) {
+	f.create = func(_ context.Context, c app.SaveReservationCommand) error {
 		f.calls++
 		if c.Username != "Test Max" || c.HotelUID != hotelID || c.StartDate.Format(time.DateOnly) != "2021-10-08" || c.EndDate.Format(time.DateOnly) != "2021-10-11" {
 			t.Fatalf("command=%+v", c)
 		}
-		return app.CreateReservationResult{ReservationUID: reservationID, HotelUID: c.HotelUID, StartDate: c.StartDate, EndDate: c.EndDate, Status: "PAID", Discount: 10, Payment: app.PaymentInfo{Status: "PAID", Price: 27000}}, nil
+		return nil
 	}
 	w := request(f.router(time.Second), "POST", "/api/v1/reservations", validBody, "Test Max")
-	if w.Code != 200 || f.calls != 1 {
+	if w.Code != 200 || f.calls != 5 {
 		t.Fatalf("status=%d, body=%s", w.Code, w.Body.String())
 	}
 }
@@ -247,7 +281,7 @@ func TestProtectedRoutesRequireNonblankUsername(t *testing.T) {
 	}
 }
 
-func TestCreateControllerRejectsMalformedInputBeforeScenario(t *testing.T) {
+func TestCreateHandlerRejectsMalformedInputBeforeScenario(t *testing.T) {
 	for _, body := range []string{
 		`{`, `null`, `[]`, `{}`, validBody + ` {}`,
 		strings.Replace(validBody, hotelID, "not-a-uuid", 1),
@@ -272,7 +306,7 @@ func TestCreateControllerRejectsMalformedInputBeforeScenario(t *testing.T) {
 	}
 }
 
-func TestReservationControllerValidatesPathUUID(t *testing.T) {
+func TestReservationHandlerValidatesPathUUID(t *testing.T) {
 	for _, method := range []string{"GET", "DELETE"} {
 		f := newFixture()
 		w := request(f.router(time.Second), method, "/api/v1/reservations/not-a-uuid", "", "Test Max")
@@ -318,7 +352,7 @@ func TestErrorsMapToPublicStatusWithoutLeakingDetails(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newFixture()
-			f.profile = func(context.Context, string) (app.UserInfoView, error) { return app.UserInfoView{}, tc.err }
+			f.list = func(context.Context, string) ([]app.ReservationData, error) { return nil, tc.err }
 			w := request(f.router(time.Second), "GET", "/api/v1/me", "", "Test Max")
 			if w.Code != tc.status || strings.Contains(w.Body.String(), "secret") {
 				t.Fatalf("status=%d, body=%s", w.Code, w.Body.String())
@@ -329,12 +363,12 @@ func TestErrorsMapToPublicStatusWithoutLeakingDetails(t *testing.T) {
 
 func TestHTTPDeadlineCoversWholeScenario(t *testing.T) {
 	f := newFixture()
-	f.profile = func(ctx context.Context, _ string) (app.UserInfoView, error) {
+	f.list = func(ctx context.Context, _ string) ([]app.ReservationData, error) {
 		if _, ok := ctx.Deadline(); !ok {
 			t.Fatal("request has no overall deadline")
 		}
 		<-ctx.Done()
-		return app.UserInfoView{}, ctx.Err()
+		return nil, ctx.Err()
 	}
 	w := request(f.router(time.Millisecond), "GET", "/api/v1/me", "", "Test Max")
 	if w.Code != 504 {
@@ -344,13 +378,13 @@ func TestHTTPDeadlineCoversWholeScenario(t *testing.T) {
 
 func TestEmptyCollectionsAreJSONArrayAndInternalIDsStayPrivate(t *testing.T) {
 	f := newFixture()
-	f.list = func(context.Context, string) ([]app.ReservationView, error) { return nil, nil }
+	f.list = func(context.Context, string) ([]app.ReservationData, error) { return nil, nil }
 	w := request(f.router(time.Second), "GET", "/api/v1/reservations", "", "Test Max")
 	if strings.TrimSpace(w.Body.String()) != "[]" {
 		t.Fatalf("body=%s", w.Body.String())
 	}
-	f.profile = func(context.Context, string) (app.UserInfoView, error) {
-		return app.UserInfoView{Loyalty: app.LoyaltyInfo{Status: "BRONZE", Discount: 5}}, nil
+	f.loyalty = func(context.Context, string) (app.LoyaltyInfo, error) {
+		return app.LoyaltyInfo{Status: "BRONZE", Discount: 5}, nil
 	}
 	w = request(f.router(time.Second), "GET", "/api/v1/me", "", "Test Max")
 	if !strings.Contains(w.Body.String(), `"reservations":[]`) {

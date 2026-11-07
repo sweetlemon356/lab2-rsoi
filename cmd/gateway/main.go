@@ -47,14 +47,7 @@ func buildHandler(cfg config.Config, logger *slog.Logger, httpClient *http.Clien
 	newID := func() (string, error) { id, err := uuid.NewRandom(); return id.String(), err }
 	service := application.NewService(reservation, payment, loyalty, newID, cfg.CleanupTimeout)
 
-	hotels := httpadapter.NewHotelController(service)
-	reservations := httpadapter.NewReservationController(service)
-	loyaltyController := httpadapter.NewLoyaltyController(service)
-	profile := httpadapter.NewProfileController(service)
-	return httpadapter.NewRouter(
-		hotels, reservations, loyaltyController, profile,
-		cfg.RequestTimeout, logger,
-	)
+	return httpadapter.NewHandler(service, cfg.RequestTimeout, logger)
 }
 
 func run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
